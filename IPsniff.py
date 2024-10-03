@@ -5,6 +5,7 @@ from datetime import datetime
 import socket
 import colorama
 from colorama import Fore, Back, Style
+from rich.progress import Progress, BarColumn, TextColumn
 
 # Initialisiere colorama
 colorama.init()

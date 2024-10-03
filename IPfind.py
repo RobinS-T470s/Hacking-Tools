@@ -5,6 +5,10 @@ import sys
 import time
 import colorama
 from colorama import Fore, Back, Style
+from rich.progress import Progress, BarColumn, TextColumn
+
+# Colorama initialization
+colorama.init()
 
 def get_mac_address(ip):
     try:
@@ -25,17 +29,18 @@ def get_device_info(ip):
         host_name, _, _ = socket.gethostbyaddr(ip)
         print(f" -- Hostname: {host_name}")
         return host_name
-    except socket.herror as e:
+    except socket.herror:
         print(f" -- Not defined")
         return "-"
 
 def get_device_status(ip, port):
+    """Überprüft, ob ein Port auf einem Gerät aktiv ist (Dummy-Funktion für das Beispiel)."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(1)
             s.connect((ip, port))
             return True
-    except (socket.timeout, socket.error) as e:
+    except (socket.timeout, socket.error):
         return False
 
 def get_operating_system(ip):
@@ -60,10 +65,10 @@ def get_firewall_info(ip):
 def is_reachable(ip):
     try:
         subprocess.check_output(["ping", "-c", "1", ip])
-        print(" -- Activ")
+        print(" -- Active")
         return True
-    except subprocess.CalledProcessError as e:
-        print(f" -- Inactiv")
+    except subprocess.CalledProcessError:
+        print(f" -- Inactive")
         return False
 
 def get_device_type(mac_address):
@@ -77,92 +82,118 @@ def get_device_type(mac_address):
 def check_activ(ip):
     try:
         subprocess.check_output(["ping", "-c", "1", ip])
-
         return True
-    except subprocess.CalledProcessError as e:
-
+    except subprocess.CalledProcessError:
         return False
 
-def find_active_ports(ip, active):
+def find_active_ports(ip, progress, port_task):
     ports = []
-    for port in range(1, 5061):  # Scannt alle Ports von 1 bis 5060
-        try_number = 1
-        while True:  # Endlosschleife bis der Port aktiv ist
-            print(f"Scanning port: {port} / 5061                                         ", end="\r")
-            if check_activ(ip):
-                if get_device_status(ip, port):
-                    ports.append(port)
-                    print(f" -- Active port: {port}                     ")
-                break  # Sobald der Port aktiv ist, breche die Schleife ab
-            else:
-                try_number += 1
-                print(f"Port: {port} / 5061 | Host inactiv, try again... ({try_number})", end="\r")
-                time.sleep(1)  # Warte eine Sekunde und versuche es erneut
+    total_ports = 5060  # Gesamtzahl der zu scannenden Ports
+    
+    for port in range(1, total_ports + 1):  # Scannt alle Ports von 1 bis 5060
+        print(f"Scanning port: {port} / {total_ports} for {ip}                                         ", end="\r")
+        if get_device_status(ip, port):
+            ports.append(port)
+            print(f" -- Active port: {port}                     ")
+            break  # Sobald der Port aktiv ist, breche die Schleife ab
+        time.sleep(0.01)  # Simulierte Zeit für Port-Scan
+        progress.advance(port_task)  # Aktualisiert die Fortschrittsanzeige für den Portscan
+
     return ports
 
 def list_devices_in_network(options):
     devices = []
+    total_attempts = 255  # Define total attempts
+    
+    with Progress(TextColumn("[progress.description]{task.description}"),
+                  BarColumn(),
+                  TextColumn("[progress.percentage]{task.percentage:>3.0f}%")) as progress:
+        
+        device_task = progress.add_task("Scanning devices...", total=total_attempts)
+        port_task = progress.add_task("Scanning ports...", total=5060, visible=False)  # Unsichtbarer Port-Task
+        
+        for i in range(1, 256):
+            ip = f"192.168.178.{i}"
+            print("---------------------------------------")
+            print("Search...", i, "/ 255 |", str(round((i / 255) * 100, 2)) + "% ")
 
-    for i in range(1, 255):
-        ip = f"192.168.178.{i}"
-        print("---------------------------------------")
-        print("Search...", i, "/ 255 |", str(round((i / 255) * 100, 2)) + "% ")
+            try:
+                host_name = get_device_info(ip) if 'h' in options else "-"
+                if host_name != "-":
+                    is_active = is_reachable(ip) if 'a' in options else False
+                    mac_address = get_mac_address(ip) if 'm' in options else "-"
+                    operating_system = get_operating_system(ip) if 's' in options else "-"
+                    firewall_info = get_firewall_info(ip) if 'f' in options else "-"
+                    device_type = get_device_type(mac_address) if 't' in options else "-"
+                    
+                    ports = []  # Standardmäßig leer
+                    if 'p' in options and is_active:  # Port-Scan nur wenn aktiv
+                        progress.update(port_task, visible=True)
+                        ports = find_active_ports(ip, progress, port_task)
+                        progress.update(port_task, visible=False)  # Nach dem Scannen wieder unsichtbar
 
-        try:
-            host_name = get_device_info(ip) if 'h' in options else "-"
-            if host_name != "-":
-                is_active = is_reachable(ip) if 'a' in options else False
-                mac_address = get_mac_address(ip) if 'm' in options else "-"
-                operating_system = get_operating_system(ip) if 's' in options else "-"
-                firewall_info = get_firewall_info(ip) if 'f' in options else "-"
-                device_type = get_device_type(mac_address) if 't' in options else "-"
-                ports = find_active_ports(ip, is_active) if 'p' in options else []
-                devices.append({
-                    'IP': ip,
-                    'Name': host_name if 'h' in options else "-",
-                    'Aktiv': '✓' if is_active else '-',
-                    'MAC': mac_address,
-                    'OS': operating_system,
-                    'FW': firewall_info,
-                    'Typ': device_type,
-                    'Ports': ports,
-                })
-        except socket.error as e:
-            print(f"Socket-Fehler für IP {ip}: {e}")
-            pass
+                    devices.append({
+                        'IP': ip,
+                        'Name': host_name if 'h' in options else "-",
+                        'Aktiv': '✓' if is_active else '-',
+                        'MAC': mac_address,
+                        'OS': operating_system,
+                        'FW': firewall_info,
+                        'Typ': device_type,
+                        'Ports': ports,
+                    })
+            except socket.error as e:
+                print(f"Socket-Fehler für IP {ip}: {e}")
+                pass
+            
+            progress.advance(device_task)  # Fortschrittsanzeige für den Geräte-Scan
 
     return devices
-
 
 def list_devices(parameters, options):
     devices = []
+    total_attempts = len(parameters)  # Define total attempts based on input
+    
+    with Progress(TextColumn("[progress.description]{task.description}"),
+                  BarColumn(),
+                  TextColumn("[progress.percentage]{task.percentage:>3.0f}%")) as progress:
+        
+        device_task = progress.add_task("Processing devices...", total=total_attempts)
+        port_task = progress.add_task("Scanning ports...", total=5060, visible=False)  # Unsichtbarer Port-Task
+        
+        for ip in parameters:
+            try:
+                host_name = get_device_info(ip) if 'h' in options else "-"
+                if host_name != "-":
+                    is_active = is_reachable(ip) if 'a' in options else False
+                    mac_address = get_mac_address(ip) if 'm' in options else "-"
+                    operating_system = get_operating_system(ip) if 's' in options else "-"
+                    firewall_info = get_firewall_info(ip) if 'f' in options else "-"
+                    device_type = get_device_type(mac_address) if 't' in options else "-"
+                    
+                    ports = []  # Standardmäßig leer
+                    if 'p' in options and is_active:  # Port-Scan nur wenn aktiv
+                        progress.update(port_task, visible=True)
+                        ports = find_active_ports(ip, progress, port_task)
+                        progress.update(port_task, visible=False)  # Nach dem Scannen wieder unsichtbar
 
-    for ip in parameters:
-        try:
-            host_name = get_device_info(ip) if 'h' in options else "-"
-            if host_name != "-":
-                is_active = is_reachable(ip) if 'a' in options else False
-                mac_address = get_mac_address(ip) if 'm' in options else "-"
-                operating_system = get_operating_system(ip) if 's' in options else "-"
-                firewall_info = get_firewall_info(ip) if 'f' in options else "-"
-                device_type = get_device_type(mac_address) if 't' in options else "-"
-                ports = find_active_ports(ip, is_active) if 'p' in options else []
-                devices.append({
-                    'IP': ip,
-                    'Name': host_name if 'h' in options else "-",
-                    'Aktiv': '✓' if is_active else '-',
-                    'MAC': mac_address,
-                    'OS': operating_system,
-                    'FW': firewall_info,
-                    'Typ': device_type,
-                    'Ports': ports,
-                })
-        except socket.error as e:
-            print(f"Socket-Fehler für IP {ip}: {e}")
-            pass
+                    devices.append({
+                        'IP': ip,
+                        'Name': host_name if 'h' in options else "-",
+                        'Aktiv': '✓' if is_active else '-',
+                        'MAC': mac_address,
+                        'OS': operating_system,
+                        'FW': firewall_info,
+                        'Typ': device_type,
+                        'Ports': ports,
+                    })
+            except socket.error as e:
+                print(f"Socket-Fehler für IP {ip}: {e}")
+                pass
+            
+            progress.advance(device_task)  # Fortschrittsanzeige für den Geräte-Scan
 
     return devices
-
 
 def display_devices_table(devices, options):
     if devices:
@@ -230,3 +261,4 @@ if __name__ == "__main__":
         devices = list_devices_in_network(options)
     
     display_devices_table(devices, options)
+
